@@ -9,8 +9,12 @@ def plot_reconstruction(rec_imgs,results,per_row=10):
     f,a=plt.subplots((num_imgs//per_row+overflow)*2,per_row,figsize=(20,4))
     for i in range(num_imgs):
         img_dim=rec_imgs.shape[-2]
-        a[i//per_row*2][i%per_row].imshow(rec_imgs[i%per_row].reshape(img_dim,img_dim))
-        a[i//per_row*2+1][i%per_row].imshow(results[i%per_row].reshape(img_dim,img_dim))
+        if rec_imgs.shape[-1]==1:
+            reshape_dims=rec_imgs.shape[1:-1]
+        else:
+            reshape_dims=rec_imgs.shape[1:]
+        a[i//per_row*2][i%per_row].imshow(rec_imgs[i%per_row].reshape(reshape_dims))
+        a[i//per_row*2+1][i%per_row].imshow(results[i%per_row].reshape(reshape_dims))
     plt.show()
 
 def shuffle_X_y(X,y):

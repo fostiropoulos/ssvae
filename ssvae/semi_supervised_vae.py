@@ -6,22 +6,42 @@ from tensorflow.keras.utils import to_categorical
 from ssvae.ssvae.vae_utils import plot_reconstruction,shuffle_X_y,plot_loss
 from vae import VAE
 
-class DiscreteVAE(VAE):
+class SSVAE(VAE):
 
-    def __init__(self,feature_size, attr_list,attr_sizes,filters=32,lra=0.002,l_c=1,s_c=100):
-        super().__init__(feature_size,attr_list,attr_sizes,filters,lr,l_c,s_c)
+    def __init__(self,image_size, z_dim,attributes,attribute_dims,filters=32,lr=0.002,c=1, num_convs=4,num_fc=2):
+        self.attributes=attributes
+        self.attribute_dims=attribute_dims
+        super().__init__(image_size,z_dim,filters,lr,c, num_convs,num_fc)
 
+    def _z_init(self,fc_layer):
+        self.mu=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
+        self.sigma=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
+        self.z=VAE.sample(self.mu,self.sigma)
 
-    def save_model(self,file):
-        saver = tf.train.Saver()
-        saver.save(self.sess, file)
-    """
-    def load_model(self,file):
-        tf.reset_default_graph()
-        self.sess=tf.Session()
-        saver = tf.train.import_meta_graph('%s.meta'%file)
-        saver.restore(self.sess, file)
-    """
+    def _z_init(self,fc_layer):
+        self.mu=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
+        self.sigma=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
+        self.z=VAE.sample(self.mu,self.sigma)
+        self.z=tf.concat([z_out[_attr] for _attr in self.attributes],-1,name=model_type)
+
+        self.mu={}
+        self.sigma={}
+        self.Y={}
+        z_out={}
+        for attr in self.attributes:
+            self.Y[attr]=tf.placeholder(tf.int8,[None,self.attributes[attr]])
+            self.mu[attr]=tf.layers.Dense(self.attributes[attr],activation=None)(fc_2)
+            self.sigma[attr]=tf.layers.Dense(self.attributes[attr],activation=None)(fc_2)
+            z_sampled=SupervisedVAE.sample(self.mu[attr],self.sigma[attr])
+            
+            z_out[attr]=tf.cast(tf.math.argmax(tf.nn.softmax(z_sampled),-1), tf.float32)/tf.cast(z_sampled.shape[-1],tf.float32)
+
+        if model_type=="sampled" or model_type=="softmax":
+            self.z=tf.concat([z_out[_attr] for _attr in self.attributes],-1,name=model_type)
+
+        else:
+            self.z=tf.stack([z_out[_attr] for _attr in self.attributes],-1,name=model_type)
+
 
     def create_model(self,feature_size,model_type,attributes, filters=32,lr=0.002,l_c=1,s_c=100):
         z_dim=len(self.attributes)

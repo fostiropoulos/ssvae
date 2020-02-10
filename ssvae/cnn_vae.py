@@ -7,148 +7,129 @@ from vae_utils import plot_reconstruction,shuffle_X_y,plot_loss
 import random
 from PIL import Image
 from tqdm import tqdm
+from ssvae.ssvae.vae import VAE
 
-class VAE:
 
-    def __init__(self,image_size,channels,z_dim,filters=32,lr=0.002,c=1, num_convs=4,num_fc=2):
-        self.image_size=image_size
-        self.channels=channels
-        self.filters=32
-        self.z_dim=z_dim
-        self.num_convs=num_convs
-        self.num_fc=num_fc
-        self.lr=lr
-        self.c=c
-        self.mode="RGB" if self.channels==3 else "L"
-        # TF variables
-        self.X=None
-        self.mu=None
-        self.sigma=None
-        self.losses=[]
-        self.fc=[]
-        self.conv_layers=[]
-        self.dec_fc=[]
-        self.deconv_layers=[]
+class cnnVAE(VAE):
 
-        self.display_layer=None
-        self.inputs=None
-        self.outputs=None
-        self.summary_op=None
-        self.build_model()
-        self.start_session()
+    def __init__(self,image_size,channels,z_dim,filters=None,lr=0.002,c=0.2, num_convs=None,num_fc=None):
+        self.num_hiddens=256
+        self.num_res_hiddens=32
+        self.embedding_dim=64
+        super().__init__(image_size,channels,z_dim,filters,lr,c, num_convs,num_fc)
 
-    def start_session(self):
-        init=tf.global_variables_initializer()
-        self.sess=tf.Session()
-        self.sess.run(init)
-        self.summary_op=tf.summary.merge_all()
-
-    def save(self,file):
-        saver = tf.train.Saver()
-        saver.save(self.sess, file)
-
-    def load(self,file):
-        self.build_model()
-        self.start_session()
-        saver = tf.train.import_meta_graph('%s.meta'%file)
-        saver.restore(self.sess, file)
-
-    def _z_init(self,fc_layer):
-        self.mu=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
-        self.sigma=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
-        self.z=VAE.sample(self.mu,self.sigma)
 
     def _loss_init(self,inputs,outputs):
 
         # applies sigmoid inside the function. We must provide logits and labels ONLY
-        reconstr_loss=tf.nn.sigmoid_cross_entropy_with_logits(labels=inputs,logits=outputs)
+        reconstr_loss=(inputs-outputs)**2#tf.nn.sigmoid_cross_entropy_with_logits(labels=inputs,logits=outputs)
         # get the mean for each sample for the reconstruction error
-        self.reconstr_loss=tf.reduce_mean(tf.reduce_sum(reconstr_loss,1))
+        self.reconstr_loss=tf.reduce_mean(reconstr_loss)
         self.latent_loss= -tf.reduce_mean(0.5 * (1 + self.sigma - self.mu**2 - tf.exp(self.sigma)))
 
-        self.loss=self.reconstr_loss + self.latent_loss * self.c
+        self.loss=self.reconstr_loss+ self.latent_loss * self.c
         self.losses=[self.loss,self.reconstr_loss,self.latent_loss]
         self.losses_labels=["Total","Recnstr","Latent"]
 
-        tf.summary.scalar("total_loss", self.loss)
-        tf.summary.scalar("latent_loss", self.latent_loss)
-        tf.summary.scalar("reconstr_loss", self.reconstr_loss)
+        #tf.summary.scalar("total_loss", self.loss)
+        #tf.summary.scalar("latent_loss", self.latent_loss)
+        #tf.summary.scalar("reconstr_loss", self.reconstr_loss)
 
     def _encoder_init(self,conv):
         # conv layers
         with tf.variable_scope("encoder"):
+            num_hiddens=self.num_hiddens
+            num_res_hiddens=self.num_res_hiddens
+            embedding_dim=self.embedding_dim
             # 64 (2,2)x(4,4)
             # 128  (2,2)x(4,4)
             # 128 (1,1)x(3,3)
             # x2
             # 32 (1,1)x(3,3)
             # 128 (1,1)x(1,1)
-            # skip connection to top of loop 
+            # skip connection to top of loop
+            # [64,128,128]
+            i=0
+            conv=(tf.keras.layers.Conv2D(num_hiddens//2,4,strides=(2,2),padding="same", activation=tf.nn.relu, name="enc_conv_%d"%i))(conv)
+            self.conv_layers.append(conv)
+            i+=1
+            conv=(tf.keras.layers.Conv2D(num_hiddens,4,strides=(2,2),padding="same", activation=tf.nn.relu, name="enc_conv_%d"%i))(conv)
+            self.conv_layers.append(conv)
+            i+=1
+            conv=(tf.keras.layers.Conv2D(num_hiddens,3,strides=(1,1),padding="same", activation=tf.nn.relu, name="enc_conv_%d"%i))(conv)
+            self.conv_layers.append(conv)
+            for j in range(2):
+                first_res=(tf.keras.layers.Conv2D(num_res_hiddens,3,strides=(1,1),padding="same", activation=tf.nn.relu, name="res_enc_conv_%d"%j))(conv)
+                self.conv_layers.append(first_res)
+                second_res=(tf.keras.layers.Conv2D(num_hiddens,1,strides=(1,1),padding="same", activation=tf.nn.relu, name="res_enc_conv_%d"%j))(first_res)
+                self.conv_layers.append(second_res)
+                conv+=second_res # resnet v1
+            conv=tf.nn.relu(conv)
+            conv=(tf.keras.layers.Conv2D(embedding_dim,1,strides=(1,1),padding="same", activation=None, name="to_vq"))(conv)
+            self.conv_layers.append(conv)
 
-            for i in range(self.num_convs):
-                print(conv.shape)
-
-                conv=(tf.keras.layers.Conv2D(self.filters*(i+1),4,strides=(2,2),padding="same", activation=tf.nn.relu, name="enc_conv_%d"%i))(conv)
-                self.conv_layers.append(conv)
-            print(conv.shape)
-
-            #flatten
             last_conv=self.conv_layers[-1]
+
             conv_shape=int(np.prod(last_conv.shape[1:]))
+            conv_img_shape=int(np.prod(last_conv.shape[1:-1]))
+            #print(last_conv.shape[1:-1])
+            #last_conv=tf.transpose(last_conv, [0,3,1,2])
+            #flatten=tf.reshape(last_conv,(-1,embedding_dim,conv_img_shape))
             flatten=tf.reshape(last_conv,(-1,conv_shape))
             print(flatten.shape)
             #dense layers
             fc=flatten
-            for i in range(self.num_fc):
-                fc=tf.layers.Dense(512,activation=tf.nn.relu,name="enc_dense_%d"%i)(fc)
-                print(fc.shape)
-                self.fc.append(fc)
+            #for i in range(2):
+            #    fc=tf.layers.Dense(1024,activation=tf.nn.relu,name="enc_dense_%d"%i)(fc)
+            #    self.fc.append(fc)
 
-            last_fc=self.fc[-1]
-        return last_fc
+            
+        return fc
 
     def _decoder_init(self,fc):
         with tf.variable_scope("decoder"):
-
-            for i in range(self.num_convs-1):
-                fc=tf.layers.Dense(123,activation=tf.nn.relu,name="dec_dense_%d"%i)(fc)
-                print(fc.shape)
-                self.fc.append(fc)
-
+            num_hiddens=self.num_hiddens
+            num_res_hiddens=self.num_res_hiddens
+            embedding_dim=self.embedding_dim
             last_conv=self.conv_layers[-1]
+            #conv_shape=int(np.prod(last_conv.shape[2:]))
             conv_shape=int(np.prod(last_conv.shape[1:]))
-            deconv_size=max(1,self.image_size//(2**self.num_convs))
+            #conv_img_shape=int(np.prod(last_conv.shape[1:-1]))
 
-            fc=tf.layers.Dense(deconv_size**2*self.filters,activation=tf.nn.relu,name="dec_dense_%d"%(i+1))(fc)
-            print(fc.shape)
-
-            self.fc.append(fc)
-
+            #fc=tf.layers.Dense(1024,activation=tf.nn.relu,name="dec_dense")(fc)
+            fc=tf.layers.Dense(conv_shape,activation=tf.nn.relu,name="dec_dense")(fc)
+            
             # convert to a 3d tensor from 2d dense
-            conv_reshape=(-1,deconv_size,deconv_size,self.filters)
+            #conv_reshape=(-1,last_conv.shape[],deconv_size,self.filters)
+
+            conv_reshape=(-1,int(last_conv.shape[1]),int(last_conv.shape[2]),int(last_conv.shape[3]))
+            #conv_reshape=(-1,int(last_conv.shape[1]),int(last_conv.shape[2]),embedding_dim)
+
+            #print(conv_reshape)
+            #fc=tf.transpose(fc, [0,2,1])
+            #print(fc.shape)
+
             reshaped=tf.reshape(fc,conv_reshape)
 
-            # deconvolutions to original shape
-            deconv=reshaped
-            num_deconvs=int((np.log2(self.image_size/deconv_size)))
+            conv=(tf.keras.layers.Conv2D(num_hiddens,3,strides=(1,1),padding="same", activation=None, name="to_vq"))(reshaped)
 
-            print(deconv.shape)
-            for i in range(num_deconvs-1):
-                deconv = tf.keras.layers.Conv2DTranspose( self.filters*(num_deconvs-i), 4, strides=(2, 2), padding="same", activation=tf.nn.relu, name="dec_deconv_%d"%i) (deconv)
-                #deconv=tf.add(skips[i+1],deconv)
-                print(deconv.shape)
-                self.deconv_layers.append(deconv)
-            #print(deconv.shape)
-            deconv = tf.keras.layers.Conv2DTranspose( self.filters, 4, strides=(2, 2), padding="same", activation=tf.nn.relu, name="dec_deconv_%d"%(i+1)) (deconv)
-
-            print(deconv.shape)
-            self.deconv_layers.append(deconv)
-
-            last_layer_kernel=int((deconv.shape[-2]-self.image_size)+1)
-            last_layer =tf.keras.layers.Conv2D(self.channels,last_layer_kernel, strides=(1, 1), padding="valid",activation=None,name="dec_deconv_%d"%(i+2))(deconv)
-            #last_layer =tf.keras.layers.Conv2DTranspose(self.channels,4, strides=(2, 2), padding="same",activation=None,name="dec_deconv_%d"%(i+1))(deconv)
-            print(last_layer.shape)
+            for j in range(2):
+                first_res=(tf.keras.layers.Conv2D(num_res_hiddens,3,strides=(1,1),padding="same", activation=tf.nn.relu, name="enc_conv_%d"%j))(conv)
+                self.conv_layers.append(first_res)
+                second_res=(tf.keras.layers.Conv2D(num_hiddens,1,strides=(1,1),padding="same", activation=tf.nn.relu, name="enc_conv_%d"%j))(first_res)
+                self.conv_layers.append(second_res)
+                conv+=tf.nn.relu(second_res) # resnet v1
+            i=0
+            deconv = tf.keras.layers.Conv2DTranspose( num_hiddens//2, 4, strides=(2, 2), padding="same", activation=tf.nn.relu, name="dec_deconv_%d"%(i+1)) (conv)
+            i+=1
+            last_layer = tf.keras.layers.Conv2DTranspose( 3, 4, strides=(2, 2), padding="same", activation=None, name="dec_deconv_%d"%(i+1)) (deconv)
+            
         return last_layer
+
+    def _z_init(self,fc_layer):
+        self.mu=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
+        self.sigma=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
+        self.z=VAE.sample(self.mu,self.sigma)
 
     def build_model(self):
 
@@ -164,7 +145,7 @@ class VAE:
         last_layer=self._decoder_init(self.z)
 
         #display layer ONLY
-        self.display_layer=tf.nn.sigmoid(last_layer,name="output")
+        self.display_layer=tf.clip_by_value(last_layer+0.5,0,1)#tf.nn.sigmoid(last_layer,name="output")
         hstack=tf.concat(([self.display_layer,self.X]),axis=1)
 
         tf.summary.image("reconstruction",hstack)
@@ -190,7 +171,7 @@ class VAE:
     def reconstruct(self,rec_imgs,plot=False):
         results=self.sess.run(self.display_layer,feed_dict={self.X:rec_imgs})
         if plot:
-            plot_reconstruction(rec_imgs,results)
+            plot_reconstruction(rec_imgs+0.5,results)
         return results
 
 
@@ -202,7 +183,7 @@ class VAE:
         for img in paths:
             _img=Image.open(img).convert(self.mode)
             imgs.append(np.array(_img.resize((self.image_size,self.image_size))))
-        imgs=np.array(imgs)/255
+        imgs=np.array(imgs)/255-0.5
         return imgs
     def partial_fit(self,X,X_test=None, batch_size=64):
         indices=np.arange(X.shape[0])
@@ -233,13 +214,6 @@ class VAE:
 
         return train_out, test_out
 
-
-
-    def z_to_X(self,z):
-        return self.sess.run(self.display_layer,feed_dict={self.z:z}).reshape(-1,self.image_size,self.image_size)
-
-    def X_to_z(self,X):
-        return self.sess.run(self.z,feed_dict={self.X:X})
 
     def fit(self,X,X_test=None,epochs=20,batch_size=64, plot=True, verbose=True,log_dir=None):
         train_monitor=[]
