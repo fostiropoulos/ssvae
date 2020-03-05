@@ -29,12 +29,13 @@ class VAE:
         self.conv_layers=[]
         self.dec_fc=[]
         self.deconv_layers=[]
-
         self.display_layer=None
         self.inputs=None
         self.outputs=None
         self.summary_op=None
+
         self.build_model()
+        self.saver = tf.train.Saver()
         self.start_session()
 
     def start_session(self):
@@ -44,19 +45,24 @@ class VAE:
         self.summary_op=tf.summary.merge_all()
 
     def save(self,file):
-        saver = tf.train.Saver()
-        saver.save(self.sess, file)
+        self.saver.save(self.sess, file)
 
     def load(self,file):
-        self.build_model()
-        self.start_session()
-        saver = tf.train.import_meta_graph('%s.meta'%file)
-        saver.restore(self.sess, file)
+        
+        #tf.reset_default_graph()
+        #self.build_model()
+        #self.start_session()
+        #self.sess=tf.Session()
+        #saver = tf.train.import_meta_graph('%s.meta'%file)
+        self.saver.restore(self.sess, file)
 
     def _z_init(self,fc_layer):
         self.mu=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
         self.sigma=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
         self.z=VAE.sample(self.mu,self.sigma)
+
+    def predict(self,X):
+        return self.sess.run(self.display_layer,feed_dict={self.X:X}).reshape(-1,self.image_size,self.image_size,self.channels)
 
     def _loss_init(self,inputs,outputs):
 

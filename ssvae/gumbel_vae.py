@@ -17,9 +17,9 @@ class VQVAE(cnnVAE):
         self.embedding_dim=D
         super().__init__(image_size,channels,None,filters,lr,c, num_convs,num_fc)
 
-    def quantize(self, embeddings,encoding_indices):
+    def quantize(self, encoding_indices):
         """Returns embedding tensor for a batch of indices."""
-        w = tf.transpose(embeddings, [1, 0])
+        w = tf.transpose(self.embeddings, [1, 0])
         # TODO(mareynolds) in V1 we had a validate_indices kwarg, this is no longer
         # supported in V2. Are we missing anything here?
         return tf.nn.embedding_lookup(w, encoding_indices)

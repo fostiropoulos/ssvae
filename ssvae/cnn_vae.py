@@ -12,17 +12,22 @@ from ssvae.ssvae.vae import VAE
 
 class cnnVAE(VAE):
 
-    def __init__(self,image_size,channels,z_dim,filters=None,lr=0.002,c=0.2, num_convs=None,num_fc=None):
-        self.num_hiddens=256
-        self.num_res_hiddens=32
-        self.embedding_dim=64
+    def __init__(self,image_size,channels,z_dim,filters=None,lr=0.0002,c=0.2, num_convs=None,num_fc=None):
+        try:
+            self.num_hiddens
+            self.num_res_hiddens
+            self.embedding_dim
+        except:
+            self.num_hiddens=256
+            self.num_res_hiddens=32
+            self.embedding_dim=256
         super().__init__(image_size,channels,z_dim,filters,lr,c, num_convs,num_fc)
 
 
     def _loss_init(self,inputs,outputs):
 
         # applies sigmoid inside the function. We must provide logits and labels ONLY
-        reconstr_loss=(inputs-outputs)**2#tf.nn.sigmoid_cross_entropy_with_logits(labels=inputs,logits=outputs)
+        reconstr_loss=tf.nn.sparse_softmax_cross_entropy_with_logits(labels=inputs,logits=outputs)
         # get the mean for each sample for the reconstruction error
         self.reconstr_loss=tf.reduce_mean(reconstr_loss)
         self.latent_loss= -tf.reduce_mean(0.5 * (1 + self.sigma - self.mu**2 - tf.exp(self.sigma)))
@@ -122,9 +127,9 @@ class cnnVAE(VAE):
             i=0
             deconv = tf.keras.layers.Conv2DTranspose( num_hiddens//2, 4, strides=(2, 2), padding="same", activation=tf.nn.relu, name="dec_deconv_%d"%(i+1)) (conv)
             i+=1
-            last_layer = tf.keras.layers.Conv2DTranspose( 3, 4, strides=(2, 2), padding="same", activation=None, name="dec_deconv_%d"%(i+1)) (deconv)
+            last_layer = tf.keras.layers.Conv2DTranspose( self.channels*256, 4, strides=(2, 2), padding="same", activation=None, name="dec_deconv_%d"%(i+1)) (deconv)
             
-        return last_layer
+        return tf.reshape(last_layer,[-1,self.image_size,self.image_size,self.channels,256])
 
     def _z_init(self,fc_layer):
         self.mu=tf.layers.Dense(self.z_dim,activation=None)(fc_layer)
@@ -143,18 +148,19 @@ class cnnVAE(VAE):
         self._z_init(last_fc)
 
         last_layer=self._decoder_init(self.z)
-
+        self.last_layer=last_layer
         #display layer ONLY
-        self.display_layer=tf.clip_by_value(last_layer+0.5,0,1)#tf.nn.sigmoid(last_layer,name="output")
-        hstack=tf.concat(([self.display_layer,self.X]),axis=1)
+        self.display_layer=tf.cast(tf.math.argmax(tf.nn.softmax(last_layer,name="output"),axis=-1),tf.int32)#tf.clip_by_value(last_layer+0.5,0,1)#
+        self.inputs=tf.cast((self.X+0.5)*255,tf.int32)
+        hstack=tf.cast(tf.concat(([self.display_layer,self.inputs]),axis=1),tf.float32)
 
         tf.summary.image("reconstruction",hstack)
 
         # flatten the inputs
-        self.inputs=tf.reshape(self.X,(-1,self.channels*self.image_size**2), name="inputs")
+        self.inputs=tf.reshape(self.inputs,(-1,self.channels*self.image_size**2), name="inputs")
 
         # flatten the outputs
-        self.outputs=tf.reshape(last_layer,(-1,self.channels*self.image_size**2),name="outputs")
+        self.outputs=tf.reshape(last_layer,(-1,self.channels*self.image_size**2,256),name="outputs")
         self._loss_init(self.inputs,self.outputs)
         self._train_init()
 
@@ -183,10 +189,12 @@ class cnnVAE(VAE):
         for img in paths:
             _img=Image.open(img).convert(self.mode)
             imgs.append(np.array(_img.resize((self.image_size,self.image_size))))
+        
         imgs=np.array(imgs)/255-0.5
         return imgs
+
     def partial_fit(self,X,X_test=None, batch_size=64):
-        indices=np.arange(X.shape[0])
+        #indices=np.arange(X.shape[0])
         #random.shuffle(indices)
         #X=X[indices]
         np.random.shuffle(X)
@@ -203,10 +211,11 @@ class cnnVAE(VAE):
 
         # if a test is given calculate test loss
         if(X_test is not None):
-            test_indices=np.arange(X.shape[0])
-            random.shuffle(indices)
-            X_test=X_test[indices]
-            X_images=self.read_batch(X_test[:batch_size],mode)
+            #test_indices=np.arange(X.shape[0])
+            #random.shuffle(test_indices)
+            np.random.shuffle(X_test)
+            #X_test=X_test[test_indices]
+            X_images=self.read_batch(X_test[:batch_size])
             test_out=self.sess.run([loss for loss in self.losses],
                                    feed_dict=self.get_feed_dict(X_images))
         else:
@@ -226,11 +235,11 @@ class cnnVAE(VAE):
         #train_batch_sum,_=shuffle_X_y(X,None)
         train_batch_sum=self.read_batch(X[x_indices[:10]])
         writer_test=None
-        if X_test:
+        if not X_test is None:
             x_test_indices=list(range(X_test.shape[0]))
             random.shuffle(x_test_indices)
             #test_batch_sum,_=shuffle_X_y(X_test,None)
-            test_batch_sum=X_test[x_test_indices[:10]]
+            test_batch_sum=self.read_batch(X_test[x_test_indices[:10]])
             writer_test = tf.summary.FileWriter(log_dir+"/test",self.sess.graph) if log_dir else None
         writer_train = tf.summary.FileWriter(log_dir+"/train",self.sess.graph) if log_dir else None
 
