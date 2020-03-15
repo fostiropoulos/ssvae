@@ -184,11 +184,12 @@ class cnnVAE(VAE):
     def get_feed_dict(self,X_batch):
         feed_dict={self.X:X_batch}
         return feed_dict
+
     def read_batch(self,paths):
         imgs=[]
         for img in paths:
             _img=Image.open(img).convert(self.mode)
-            imgs.append(np.array(_img.resize((self.image_size,self.image_size))))
+            imgs.append(np.array(_img.resize((self.image_size,self.image_size))).reshape(self.image_size,self.image_size,self.channels))
         
         imgs=np.array(imgs)/255-0.5
         return imgs

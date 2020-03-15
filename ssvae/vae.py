@@ -203,6 +203,8 @@ class VAE:
     def get_feed_dict(self,X_batch):
         feed_dict={self.X:X_batch}
         return feed_dict
+
+
     def read_batch(self,paths):
         imgs=[]
         for img in paths:
@@ -210,6 +212,7 @@ class VAE:
             imgs.append(np.array(_img.resize((self.image_size,self.image_size))))
         imgs=np.array(imgs)/255
         return imgs
+        
     def partial_fit(self,X,X_test=None, batch_size=64):
         indices=np.arange(X.shape[0])
         #random.shuffle(indices)
@@ -251,7 +254,6 @@ class VAE:
         train_monitor=[]
         test_monitor=[]
         rec_monitor=[]
-
 
         x_indices=list(range(X.shape[0]))
         random.shuffle(x_indices)
