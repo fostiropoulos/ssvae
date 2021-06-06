@@ -20,6 +20,7 @@ class VAE:
         self.lr=lr
         self.c=c
         self.mode="RGB" if self.channels==3 else "L"
+
         # TF variables
         self.X=None
         self.mu=None
@@ -48,12 +49,6 @@ class VAE:
         self.saver.save(self.sess, file)
 
     def load(self,file):
-        
-        #tf.reset_default_graph()
-        #self.build_model()
-        #self.start_session()
-        #self.sess=tf.Session()
-        #saver = tf.train.import_meta_graph('%s.meta'%file)
         self.saver.restore(self.sess, file)
 
     def _z_init(self,fc_layer):
@@ -83,13 +78,6 @@ class VAE:
     def _encoder_init(self,conv):
         # conv layers
         with tf.variable_scope("encoder"):
-            # 64 (2,2)x(4,4)
-            # 128  (2,2)x(4,4)
-            # 128 (1,1)x(3,3)
-            # x2
-            # 32 (1,1)x(3,3)
-            # 128 (1,1)x(1,1)
-            # skip connection to top of loop 
 
             for i in range(self.num_convs):
                 print(conv.shape)
@@ -213,23 +201,28 @@ class VAE:
         imgs=np.array(imgs)/255
         return imgs
         
+    
     def partial_fit(self,X,X_test=None, batch_size=64):
         indices=np.arange(X.shape[0])
-        #random.shuffle(indices)
-        #X=X[indices]
+
         np.random.shuffle(X)
         num_batches=X.shape[0]//batch_size
+
+        train_out=[]
         with tqdm(range(num_batches)) as t:
             for i in t:
                 X_batch=X[i*batch_size:(i+1)*batch_size]
                 X_images=self.read_batch(X_batch)
                 loss,_=self.sess.run([self.loss]+[self.train],feed_dict=self.get_feed_dict(X_images))
-                t.set_description("Loss %.2f"%loss)
-        X_images=self.read_batch(X[:batch_size])
-        train_out=self.sess.run([loss for loss in self.losses],
-                                feed_dict=self.get_feed_dict(X_images))
 
-        # if a test is given calculate test loss
+                losses=self.sess.run([loss for loss in self.losses],
+                                        feed_dict=self.get_feed_dict(X_images))
+                train_out+=losses
+
+                t.set_description("Loss %s"%losses)
+        X_images=self.read_batch(X[:batch_size])
+
+
         if(X_test is not None):
             test_indices=np.arange(X.shape[0])
             random.shuffle(indices)

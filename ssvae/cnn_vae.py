@@ -10,7 +10,7 @@ from tqdm import tqdm
 from ssvae.ssvae.vae import VAE
 
 
-class cnnVAE(VAE):
+class cnnVAE:
 
     def __init__(self,image_size,channels,z_dim,filters=None,lr=0.0002,c=0.2, num_convs=None,num_fc=None):
         try:
@@ -195,9 +195,7 @@ class cnnVAE(VAE):
         return imgs
 
     def partial_fit(self,X,X_test=None, batch_size=64):
-        #indices=np.arange(X.shape[0])
-        #random.shuffle(indices)
-        #X=X[indices]
+
         np.random.shuffle(X)
         num_batches=X.shape[0]//batch_size
         with tqdm(range(num_batches)) as t:
@@ -206,16 +204,14 @@ class cnnVAE(VAE):
                 X_images=self.read_batch(X_batch)
                 loss,_=self.sess.run([self.loss]+[self.train],feed_dict=self.get_feed_dict(X_images))
                 t.set_description("Loss %.2f"%loss)
+        
         X_images=self.read_batch(X[:batch_size])
         train_out=self.sess.run([loss for loss in self.losses],
                                 feed_dict=self.get_feed_dict(X_images))
 
-        # if a test is given calculate test loss
         if(X_test is not None):
-            #test_indices=np.arange(X.shape[0])
-            #random.shuffle(test_indices)
+            
             np.random.shuffle(X_test)
-            #X_test=X_test[test_indices]
             X_images=self.read_batch(X_test[:batch_size])
             test_out=self.sess.run([loss for loss in self.losses],
                                    feed_dict=self.get_feed_dict(X_images))
